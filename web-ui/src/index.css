@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles */
+.message-content {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-width: 100%;
+  line-height: 1.5;
+}
+
+.message-bubble .bg-gray-600 {
+  margin-bottom: 1rem;
+}
+
+.message-bubble .text-xs {
+  margin-top: 0.5rem;
+}
+
+/* Custom black background for chat area */
+.chat-black-bg {
+  background-color: #141414 !important;
+}

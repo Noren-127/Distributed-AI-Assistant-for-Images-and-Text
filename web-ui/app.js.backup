@@ -1,0 +1,927 @@
+class NovaChatbot {
+    constructor() {
+        this.sessionId = null;
+        this.isConnected = false;
+        this.messageCount = 0;
+        this.uploadedFiles = [];
+        this.chatHistory = []; // Store chat sessions
+        this.currentChatTitle = null;
+        
+        this.initializeElements();
+        this.bindEvents();
+        this.initializeLucide();
+        this.loadChatHistory();
+        
+        // Enable chat immediately so users can type
+        this.enableChat();
+        
+        // Initialize session in background
+        this.initializeSession();
+        
+        // Fallback: ensure chat is enabled after delay
+        setTimeout(() => {
+            if (!this.isConnected) {
+                console.log('Ensuring chat is enabled...');
+                this.enableChat();
+                this.addMessage('system', 'Chat enabled. You can now send messages.');
+            }
+        }, 3000);
+    }
+    
+    initializeElements() {
+        // Status elements
+        this.statusIndicator = document.getElementById('statusIndicator');
+        this.statusText = document.getElementById('statusText');
+        
+        // Chat history elements
+        this.chatHistoryElement = document.getElementById('chatHistory');
+        this.newChatBtn = document.getElementById('newChatBtn');
+        
+        // Session elements
+        this.sessionIdElement = document.getElementById('sessionId');
+        this.messageCountElement = document.getElementById('messageCount');
+        
+        // Chat elements
+        this.chatMessages = document.getElementById('chatMessages');
+        this.typingIndicator = document.getElementById('typingIndicator');
+        this.messageInput = document.getElementById('messageInput');
+        this.sendButton = document.getElementById('sendButton');
+        this.messageForm = document.getElementById('messageForm');
+        this.attachButton = document.getElementById('attachButton');
+        this.fileInput = document.getElementById('fileInput');
+        
+        // File upload elements
+        this.uploadedFilesContainer = document.getElementById('uploadedFilesContainer');
+        this.uploadedFilesElement = document.getElementById('uploadedFiles');
+        this.uploadedFilesCount = document.getElementById('uploadedFilesCount');
+        this.fileInput = document.getElementById('fileInput');
+        
+        // Other buttons
+        this.clearChatBtn = document.getElementById('clearChatBtn');
+        this.clearHistoryBtn = document.getElementById('clearHistoryBtn');
+    }
+    
+    bindEvents() {
+        // Message form
+        this.messageForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.sendMessage();
+        });
+        
+        // Message input keyboard shortcuts
+        this.messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.sendMessage();
+            }
+        });
+        
+        // New chat button
+        this.newChatBtn.addEventListener('click', () => {
+            this.createNewChat();
+        });
+        
+        // Attach button
+        this.attachButton.addEventListener('click', () => {
+            console.log('Attach button clicked, sessionId:', this.sessionId); // Debug log
+            console.log('File input element:', this.fileInput); // Debug log
+            this.fileInput.click();
+        });
+        
+        // File input change
+        this.fileInput.addEventListener('change', (e) => {
+            this.handleFiles(e.target.files);
+        });
+        
+        // Clear chat
+        this.clearChatBtn.addEventListener('click', () => {
+            this.clearChat();
+        });
+        
+        // Clear all history
+        this.clearHistoryBtn.addEventListener('click', () => {
+            this.clearAllHistory();
+        });
+        
+        // Auto-resize textarea
+        this.messageInput.addEventListener('input', () => {
+            this.messageInput.style.height = 'auto';
+            this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 120) + 'px';
+        });
+    }
+    
+    initializeLucide() {
+        if (typeof lucide !== 'undefined') {
+            lucide.createIcons();
+        }
+    }
+    
+    async initializeSession() {
+        try {
+            this.updateStatus('Connecting...', 'yellow');
+            
+            console.log('Attempting to create session...');
+            const response = await this.apiCall('/api/session', 'POST');
+            console.log('Session response:', response);
+            
+            if (response.status === 'success') {
+                this.sessionId = response.sessionId;
+                this.sessionIdElement.textContent = this.sessionId;
+                this.isConnected = true;
+                this.updateStatus('Connected', 'green');
+                this.enableChat();
+                
+                console.log('Session created successfully:', this.sessionId);
+                
+                // Add welcome message
+                this.addMessage('assistant', 'Hello! I\'m Nova, your AI assistant. I can help you with questions, analyze uploaded files, and assist with assignments. How can I help you today?');
+                
+            } else {
+                console.error('Session creation failed:', response);
+                throw new Error('Failed to create session');
+            }
+            
+        } catch (error) {
+            console.error('Session initialization failed:', error);
+            this.updateStatus('Disconnected', 'red');
+            this.addMessage('system', 'Failed to connect to the server. Please refresh the page and try again.');
+            
+            // Enable chat anyway for testing
+            console.log('Enabling chat for testing purposes...');
+            this.sessionId = 'fallback_session_' + Date.now();
+            this.sessionIdElement.textContent = this.sessionId.substring(0, 8) + '...';
+            this.enableChat();
+            this.addMessage('system', 'Chat enabled for testing. You can try sending messages.');
+        }
+    }
+    
+    async sendMessage() {
+        const message = this.messageInput.value.trim();
+        if (!message) return;
+        
+        console.log('Starting to send message:', message);
+        
+        // Add user message to chat
+        let messageText = message;
+        let fileAttachment = '';
+        
+        // Add file attachment to message if files exist
+        if (this.uploadedFiles.length > 0) {
+            const latestFile = this.uploadedFiles[this.uploadedFiles.length - 1];
+            const fileIcon = latestFile.name.toLowerCase().endsWith('.pdf') ? 'file-text' : 'file';
+            const fileColor = latestFile.name.toLowerCase().endsWith('.pdf') ? 'text-red-400' : 'text-blue-400';
+            
+            fileAttachment = `
+                <div class="text-right">
+                    <div class="inline-block">
+                        <div class="flex items-center space-x-1 bg-gray-800 px-2 py-1 rounded border border-gray-700 mb-1">
+                            <i data-lucide="${fileIcon}" class="w-3 h-3 ${fileColor} flex-shrink-0"></i>
+                            <div class="text-xs font-medium text-white truncate">${latestFile.name}</div>
+                        </div>
+                        <div class="text-xs text-gray-400 text-right">${this.formatFileSize(latestFile.size)}</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        this.addMessage('user', messageText, fileAttachment);
+        this.updateMessageCount(); // Update count when user sends message
+        this.messageInput.value = '';
+        this.messageInput.style.height = 'auto';
+        this.disableChat();
+        
+        // Show typing indicator
+        this.showTypingIndicator();
+        
+        try {
+            // Check if we have uploaded files and include file content
+            let fileContent = null;
+            if (this.uploadedFiles.length > 0) {
+                // Get most recent uploaded file
+                const latestFile = this.uploadedFiles[this.uploadedFiles.length - 1];
+                
+                // Try to get file content from server
+                try {
+                    const hostname = window.location.hostname;
+                    let fileEndpoint;
+                    if (hostname === '0.0.0.0' || hostname === '127.0.0.1' || hostname === 'localhost') {
+                        fileEndpoint = `http://127.0.0.1:8082/api/uploads/${latestFile.id.replace('file_', '')}`;
+                    } else {
+                        fileEndpoint = `http://${hostname}:8082/api/uploads/${latestFile.id.replace('file_', '')}`;
+                    }
+                    
+                    const fileResponse = await fetch(fileEndpoint);
+                    if (fileResponse.ok) {
+                        const fileData = await fileResponse.json();
+                        if (fileData.status === 'success') {
+                            fileContent = fileData.content;
+                        }
+                    }
+                } catch (e) {
+                    console.log('Could not fetch file content, proceeding without it');
+                }
+            }
+            
+            // Send message with optional file content in request body
+            let sessionId = this.sessionId || 'fallback_session_' + Date.now();
+            let url = `/api/chat?sessionId=${encodeURIComponent(sessionId)}&message=${encodeURIComponent(message)}`;
+            
+            // Prepare request body with file content if available
+            let requestBody = null;
+            if (fileContent) {
+                // Send file content in request body instead of URL
+                requestBody = {
+                    fileContent: fileContent.substring(0, 10000) // Limit content length
+                };
+                console.log('Sending message with file content (length:', fileContent.length, ')');
+            }
+            
+            console.log('Using sessionId:', sessionId);
+            console.log('Sending message to:', url);
+            
+            // Add timeout to prevent freezing
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Request timeout')), 30000);
+            });
+            
+            const response = await Promise.race([
+                this.apiCall(url, 'POST', requestBody),
+                timeoutPromise
+            ]);
+            
+            console.log('Chat response:', response);
+            
+            if (response.status === 'success') {
+                // Hide typing indicator and add AI response
+                this.hideTypingIndicator();
+                this.addMessage('assistant', response.response);
+                this.updateMessageCount();
+            } else {
+                throw new Error(response.message || 'Chat request failed');
+            }
+            
+        } catch (error) {
+            console.error('Message send failed:', error);
+            this.hideTypingIndicator();
+            
+            if (error.message === 'Request timeout') {
+                this.addMessage('system', 'Request timed out. Please try again.');
+            } else {
+                this.addMessage('system', 'Sorry, I encountered an error. Please try again.');
+            }
+        } finally {
+            // Always re-enable chat
+            this.enableChat();
+            this.messageInput.focus();
+        }
+    }
+    
+    async handleFiles(files) {
+        if ((!this.sessionId && !this.isConnected) || files.length === 0) {
+            this.addMessage('system', '⚠️ Please wait for connection to be established before uploading files.');
+            return;
+        }
+        
+        for (const file of files) {
+            if (this.isValidFileType(file)) {
+                await this.uploadFile(file);
+            } else {
+                this.addMessage('system', `File type not supported: ${file.name}`);
+            }
+        }
+    }
+    
+    isValidFileType(file) {
+        const validTypes = ['application/pdf', 'text/plain', 'text/csv', 'text/markdown'];
+        return validTypes.includes(file.type) || file.name.match(/\.(pdf|txt|csv|md)$/i);
+    }
+    
+    async uploadFile(file) {
+        // Show file preview instead of system message
+        const fileIcon = file.name.toLowerCase().endsWith('.pdf') ? 'file-text' : 'file';
+        const fileColor = file.name.toLowerCase().endsWith('.pdf') ? 'text-red-400' : 'text-blue-400';
+        
+        const previewContent = `
+            <div class="file-attachment inline-block">
+                <div class="flex items-center space-x-1 bg-gray-800 px-2 py-1 rounded border border-gray-700">
+                    <i data-lucide="${fileIcon}" class="w-3 h-3 ${fileColor} flex-shrink-0"></i>
+                    <div class="text-xs font-medium text-white truncate">${file.name}</div>
+                </div>
+            </div>
+        `;
+        
+        this.addMessage('system', `Uploading: ${previewContent}`, false);
+        
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            // Use same API endpoint logic as apiCall
+            let uploadEndpoint;
+            const hostname = window.location.hostname;
+            if (hostname === '0.0.0.0' || hostname === '127.0.0.1' || hostname === 'localhost') {
+                uploadEndpoint = `http://127.0.0.1:8082/api/upload?sessionId=${encodeURIComponent(this.sessionId)}`;
+            } else {
+                uploadEndpoint = `http://${hostname}:8082/api/upload?sessionId=${encodeURIComponent(this.sessionId)}`;
+            }
+            
+            const response = await fetch(uploadEndpoint, {
+                method: 'POST',
+                body: formData
+            });
+            
+            const result = await response.json();
+            
+            console.log('Upload response:', result); // Debug log
+            
+            if (result.status === 'success') {
+                // Safely handle filename with special characters
+                const safeFileName = (file.name || '').replace(/[\\x00-\\x1F\\x7F-\\x9F]/g, ''); // Remove control characters
+                this.uploadedFiles.push({
+                    id: result.file_id,
+                    name: safeFileName,
+                    size: file.size
+                });
+                
+                console.log('Files after upload:', this.uploadedFiles); // Debug log
+                
+                this.updateUploadedFilesList();
+                this.addMessage('system', `✅ ${safeFileName} uploaded and processed successfully!`);
+                
+            } else {
+                throw new Error(result.message || 'File upload failed');
+            }
+            
+        } catch (error) {
+            console.error('File upload failed:', error);
+            const safeFileName = (file.name || '').replace(/[\\x00-\\x1F\\x7F-\\x9F]/g, '');
+            this.addMessage('system', `❌ Failed to upload ${safeFileName}: ${error.message}`);
+        }
+    }
+    
+    updateUploadedFilesList() {
+        this.uploadedFilesElement.innerHTML = '';
+        
+        // Update file count
+        this.uploadedFilesCount.textContent = `${this.uploadedFiles.length} file${this.uploadedFiles.length !== 1 ? 's' : ''}`;
+        
+        // Show/hide container based on whether files exist
+        if (this.uploadedFiles.length === 0) {
+            this.uploadedFilesContainer.classList.add('hidden');
+            return;
+        }
+        
+        this.uploadedFilesContainer.classList.remove('hidden');
+        
+        this.uploadedFiles.forEach(file => {
+            const fileElement = document.createElement('div');
+            fileElement.className = 'flex items-center justify-between bg-gray-800 p-3 rounded-lg border border-gray-700 hover:bg-gray-750 transition-colors';
+            
+            const fileIcon = file.name.toLowerCase().endsWith('.pdf') ? 'file-text' : 'file';
+            const fileColor = file.name.toLowerCase().endsWith('.pdf') ? 'text-red-400' : 'text-blue-400';
+            
+            fileElement.innerHTML = `
+                <div class="flex items-center space-x-3 flex-1 min-w-0">
+                    <div class="w-10 h-10 bg-gray-700 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <i data-lucide="${fileIcon}" class="w-5 h-5 ${fileColor}"></i>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm font-medium text-white truncate">${file.name}</div>
+                        <div class="text-xs text-gray-400">${this.formatFileSize(file.size)}</div>
+                    </div>
+                </div>
+                <button onclick="nova.removeFile('${file.id}')" class="text-gray-400 hover:text-red-400 hover:bg-red-900/20 p-2 rounded-lg transition-colors">
+                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                </button>
+            `;
+            this.uploadedFilesElement.appendChild(fileElement);
+        });
+        
+        // Reinitialize lucide icons
+        this.initializeLucide();
+    }
+    
+    removeFile(fileId) {
+        this.uploadedFiles = this.uploadedFiles.filter(file => file.id !== fileId);
+        this.updateUploadedFilesList();
+        this.addMessage('system', `File removed from session`);
+    }
+    
+    loadChatHistory() {
+        // Load chat history from server (hard disk)
+        this.loadChatHistoryFromServer();
+    }
+    
+    async loadChatHistoryFromServer() {
+        try {
+            const response = await this.apiCall('/api/history');
+            if (response && Array.isArray(response)) {
+                // Sort by timestamp descending (newest first)
+                this.chatHistory = response.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                this.updateChatHistoryUI();
+            }
+        } catch (error) {
+            console.error('Failed to load chat history:', error);
+            // Fallback to localStorage if server fails
+            const saved = localStorage.getItem('novaChatHistory');
+            if (saved) {
+                this.chatHistory = JSON.parse(saved);
+                // Sort by timestamp descending (newest first)
+                this.chatHistory = this.chatHistory.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                this.updateChatHistoryUI();
+            }
+        }
+    }
+    
+    async saveChatHistory() {
+        // Save chat history to server (hard disk)
+        try {
+            if (this.chatHistory.length > 0) {
+                // Save each chat to server
+                for (const chat of this.chatHistory) {
+                    await this.apiCall('/api/history', 'POST', {
+                        chatId: chat.id,
+                        title: chat.title,
+                        messages: chat.messages, // Don't stringify here - let the server handle it
+                        timestamp: chat.timestamp,
+                        messageCount: chat.messageCount
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('Failed to save chat history to server:', error);
+            // Fallback to localStorage if server fails
+            localStorage.setItem('novaChatHistory', JSON.stringify(this.chatHistory));
+        }
+    }
+    
+    createNewChat() {
+        // Save current chat if it has messages
+        if (this.messageCount > 0) {
+            this.saveCurrentChat();
+        }
+        
+        // Clear current chat
+        this.chatMessages.innerHTML = `
+            <div class="flex justify-center h-full items-center">
+                <div class="text-center text-gray-400 py-8 max-w-md">
+                    <div class="w-16 h-16 bg-green-600 rounded-full flex items-center justify-center mx-auto mb-4 welcome-icon">
+                        <i data-lucide="message-circle" class="w-8 h-8 text-white"></i>
+                    </div>
+                    <h3 class="text-lg font-medium text-white mb-2">Welcome to Nova</h3>
+                    <p class="text-sm text-gray-400">I'm your AI assistant. Ask me anything or upload a file to get started.</p>
+                </div>
+            </div>
+        `;
+        
+        // Create new session only if we don't have one already
+        if (!this.sessionId) {
+            this.initializeSession();
+        } else {
+            // Generate a new session ID for this chat
+            this.sessionId = 'chat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            this.sessionIdElement.textContent = this.sessionId.substring(0, 8) + '...';
+            this.messageCount = 0;
+            this.messageCountElement.textContent = this.messageCount;
+            this.currentChatTitle = null;
+            this.enableChat();
+        }
+        
+        // Clear uploaded files for new chat session
+        this.uploadedFiles = [];
+        this.updateUploadedFilesList();
+    }
+    
+    async saveCurrentChat(skipRepositioning = false) {
+        console.log('saveCurrentChat called, sessionId:', this.sessionId);
+        if (!this.sessionId) {
+            console.log('No sessionId, returning');
+            return;
+        }
+        
+        // Check if this chat is already saved to prevent duplicates
+        const existingChat = this.chatHistory.find(c => c.id === this.sessionId);
+        if (existingChat) {
+            console.log('Chat already saved, updating instead of creating new entry');
+            // Update existing chat instead of creating new one
+            const messages = [];
+            const messageElements = this.chatMessages.querySelectorAll('.message-bubble');
+            
+            messageElements.forEach(el => {
+                const role = el.classList.contains('justify-end') ? 'user' : 'assistant';
+                const content = el.querySelector('.message-content')?.textContent || '';
+                if (content && !el.classList.contains('bg-yellow-50')) {
+                    messages.push({ role, content, timestamp: new Date().toISOString() });
+                }
+            });
+            
+            existingChat.messages = messages;
+            existingChat.messageCount = messages.length;
+            
+            // Update timestamp only when not skipping repositioning (i.e., when sending messages)
+            if (!skipRepositioning) {
+                existingChat.timestamp = new Date().toISOString();
+            }
+            
+            // Move updated chat to top of history (unless skipping repositioning)
+            if (!skipRepositioning) {
+                const currentIndex = this.chatHistory.findIndex(c => c.id === this.sessionId);
+                if (currentIndex > 0) {
+                    const [updatedChat] = this.chatHistory.splice(currentIndex, 1);
+                    this.chatHistory.unshift(updatedChat);
+                }
+            }
+        } else {
+            const messages = [];
+            const messageElements = this.chatMessages.querySelectorAll('.message-bubble');
+            console.log('Found message elements:', messageElements.length);
+            
+            messageElements.forEach(el => {
+                const role = el.classList.contains('justify-end') ? 'user' : 'assistant';
+                const content = el.querySelector('.message-content')?.textContent || '';
+                if (content && !el.classList.contains('bg-yellow-50')) { // Skip system messages
+                    messages.push({ role, content, timestamp: new Date().toISOString() });
+                }
+            });
+            
+            console.log('Messages to save:', messages.length);
+            
+            if (messages.length > 0) {
+                const chatTitle = this.generateChatTitle(messages);
+                console.log('Generated title:', chatTitle);
+                
+                this.chatHistory.unshift({
+                    id: this.sessionId,
+                    title: chatTitle,
+                    messages: messages,
+                    timestamp: new Date().toISOString(),
+                    messageCount: messages.length
+                });
+                
+                console.log('Chat history before limit:', this.chatHistory.length);
+                
+                // Keep only last 20 chats
+                if (this.chatHistory.length > 20) {
+                    this.chatHistory = this.chatHistory.slice(0, 20);
+                }
+            } else {
+                console.log('No messages to save');
+                return;
+            }
+        }
+        
+        console.log('Saving to hard disk...');
+        await this.saveChatHistory();
+        this.updateChatHistoryUI();
+        console.log('Chat saved successfully');
+    }
+    
+    generateChatTitle(messages) {
+        const firstUserMessage = messages.find(m => m.role === 'user');
+        if (firstUserMessage) {
+            const title = firstUserMessage.content.substring(0, 50);
+            return title.length < 50 ? title : title + '...';
+        }
+        return 'New Chat';
+    }
+    
+    updateChatHistoryUI() {
+        if (this.chatHistory.length === 0) {
+            this.chatHistoryElement.innerHTML = `
+                <div class="text-xs text-gray-500 text-center py-8">
+                    No previous conversations
+                </div>
+            `;
+            return;
+        }
+        
+        this.chatHistoryElement.innerHTML = '';
+        
+        this.chatHistory.forEach(chat => {
+            const chatElement = document.createElement('div');
+            chatElement.className = `sidebar-item p-3 rounded-lg cursor-pointer ${chat.id === this.sessionId ? 'active' : ''}`;
+            
+            const date = new Date(chat.timestamp);
+            const timeAgo = this.getTimeAgo(date);
+            
+            chatElement.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm font-medium text-gray-300 truncate">${chat.title}</div>
+                        <div class="text-xs text-gray-500">${timeAgo}</div>
+                    </div>
+                    <button onclick="nova.deleteChat('${chat.id}')" class="text-red-400 hover:text-white hover:bg-red-600 opacity-100 transition-all p-2 hover:bg-red-600 rounded">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            `;
+            
+            chatElement.addEventListener('click', (e) => {
+                if (!e.target.closest('button')) {
+                    this.loadChat(chat.id);
+                }
+            });
+            
+            this.chatHistoryElement.appendChild(chatElement);
+        });
+        
+        this.initializeLucide();
+    }
+    
+    getTimeAgo(date) {
+        const seconds = Math.floor((new Date() - date) / 1000);
+        
+        if (seconds < 60) return 'just now';
+        if (seconds < 3600) return Math.floor(seconds / 60) + ' min ago';
+        if (seconds < 86400) return Math.floor(seconds / 3600) + ' hours ago';
+        if (seconds < 604800) return Math.floor(seconds / 86400) + ' days ago';
+        
+        return date.toLocaleDateString();
+    }
+    
+    loadChat(chatId) {
+        const chat = this.chatHistory.find(c => c.id === chatId);
+        if (!chat) return;
+        
+        // Save current chat if it has messages
+        if (this.messageCount > 0 && this.sessionId !== chatId) {
+            this.saveCurrentChat(true); // Skip repositioning when switching chats
+        }
+        
+        // Load selected chat
+        this.sessionId = chatId;
+        this.messageCount = chat.messageCount;
+        this.currentChatTitle = chat.title;
+        
+        // Update UI
+        this.sessionIdElement.textContent = this.sessionId.substring(0, 8) + '...';
+        this.messageCountElement.textContent = this.messageCount;
+        
+        // Clear and reload messages
+        this.chatMessages.innerHTML = '';
+        
+        // Handle messages that might be stringified or already parsed
+        let messages = chat.messages;
+        if (typeof messages === 'string') {
+            try {
+                messages = JSON.parse(messages);
+            } catch (e) {
+                console.error('Failed to parse messages:', e);
+                messages = [];
+            }
+        }
+        
+        messages.forEach(msg => {
+            this.addMessage(msg.role, msg.content, null, false);
+        });
+        
+        // Clear uploaded files for new chat session
+        this.uploadedFiles = [];
+        this.updateUploadedFilesList();
+        
+        this.updateChatHistoryUI();
+        this.enableChat();
+    }
+    
+    async clearAllHistory() {
+        if (confirm('Are you sure you want to delete all chat history? This cannot be undone.')) {
+            try {
+                // Clear all history from server (hard disk)
+                await this.apiCall('/api/history?action=clear');
+                
+                // Clear local array
+                this.chatHistory = [];
+                
+                // Update UI
+                this.updateChatHistoryUI();
+                
+                // Start new chat
+                this.createNewChat();
+                
+                console.log('All chat history cleared from hard disk');
+                alert('All chat history has been deleted successfully.');
+            } catch (error) {
+                console.error('Failed to clear all history:', error);
+                alert('Failed to clear all history. Please try again.');
+            }
+        }
+    }
+    
+    async deleteChat(chatId) {
+        if (confirm('Delete this chat?')) {
+            try {
+                // Delete from server (hard disk)
+                await this.apiCall(`/api/history?action=delete&chatId=${chatId}`);
+                
+                // Remove from local array
+                this.chatHistory = this.chatHistory.filter(c => c.id !== chatId);
+                
+                if (this.sessionId === chatId) {
+                    this.createNewChat();
+                }
+                
+                this.updateChatHistoryUI();
+                console.log('Chat deleted successfully from hard disk');
+            } catch (error) {
+                console.error('Failed to delete chat:', error);
+                alert('Failed to delete chat. Please try again.');
+            }
+        }
+    }
+    
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+    
+    addMessage(role, content, fileAttachment = null, saveToHistory = true) {
+        const messageDiv = document.createElement('div');
+        
+        if (role === 'user') {
+            messageDiv.className = 'flex justify-end mb-4 message-bubble';
+            messageDiv.innerHTML = `
+                <div class="max-w-xs lg:max-w-md">
+                    <div style="background-color: #323232d9;" class="text-white rounded-2xl rounded-br-sm px-4 py-2">
+                        ${fileAttachment ? `${fileAttachment}` : ''}
+                        <div class="text-base message-content text-right">${content}</div>
+                    </div>
+                    <div class="text-sm text-gray-400 mt-1 text-right">You</div>
+                </div>
+            `;
+            
+            // Initialize lucide icons for file attachments
+            setTimeout(() => {
+                const fileIcons = messageDiv.querySelectorAll('[data-lucide]');
+                fileIcons.forEach(icon => {
+                    lucide.createIcons({ nodes: [icon] });
+                });
+            }, 0);
+        } else if (role === 'assistant') {
+            messageDiv.className = 'flex justify-center mb-4 message-bubble';
+            messageDiv.innerHTML = `
+                <div class="max-w-2xl">
+                    <div class="text-white rounded-2xl rounded-bl-sm px-4 py-3">
+                        <div class="text-base message-content leading-relaxed">${content}</div>
+                    </div>
+                    <div class="text-sm text-gray-400 mt-2">Nova</div>
+                </div>
+            `;
+        } else {
+            // System message - styled as error messages like in the image
+            messageDiv.className = 'flex justify-center mb-4';
+            messageDiv.innerHTML = `
+                <div class="bg-red-900 bg-opacity-50 border border-red-600 text-red-200 rounded-lg px-4 py-3 text-sm max-w-md error-message">
+                    ${content}
+                </div>
+            `;
+        }
+        
+        this.chatMessages.appendChild(messageDiv);
+        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        
+        // Don't auto-save - only save when user clicks "New chat"
+        // This prevents duplicate entries in chat history
+    }
+    
+    formatMessage(content) {
+        // Basic markdown-like formatting
+        return content
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/`(.*?)`/g, '<code class="bg-gray-200 px-1 rounded">$1</code>')
+            .replace(/\n/g, '<br>');
+    }
+    
+    formatTime(date) {
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    
+    showTypingIndicator() {
+        this.typingIndicator.classList.remove('hidden');
+        this.scrollToBottom();
+    }
+    
+    hideTypingIndicator() {
+        this.typingIndicator.classList.add('hidden');
+    }
+    
+    scrollToBottom() {
+        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+    }
+    
+    updateStatus(text, color) {
+        this.statusText.textContent = text;
+        this.statusIndicator.className = `w-3 h-3 rounded-full bg-${color}-400`;
+    }
+    
+    updateMessageCount() {
+        this.messageCount++;
+        this.messageCountElement.textContent = this.messageCount;
+        
+        // Auto-save chat when any message is sent
+        if (this.messageCount > 0) {
+            console.log('Message sent, saving chat to history');
+            this.saveCurrentChat();
+        }
+    }
+    
+    enableChat() {
+        this.messageInput.disabled = false;
+        this.sendButton.disabled = false;
+    }
+    
+    disableChat() {
+        this.messageInput.disabled = true;
+        this.sendButton.disabled = true;
+    }
+    
+    async clearChat() {
+        // For now, just create a new chat session
+        this.addMessage('system', 'Starting new chat session...');
+        this.createNewChat();
+    }
+    
+    async apiCall(endpoint, method = 'GET', data = null) {
+        const options = {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        };
+        
+        if (data && method !== 'GET') {
+            options.body = JSON.stringify(data);
+        }
+        
+        // Connect to Java API server - handle different hostnames
+        let apiEndpoint;
+        const hostname = window.location.hostname;
+        if (hostname === '0.0.0.0' || hostname === '127.0.0.1' || hostname === 'localhost') {
+            // When accessing via 0.0.0.0, use 127.0.0.1 for API calls to avoid CORS issues
+            apiEndpoint = `http://127.0.0.1:8082${endpoint}`;
+        } else {
+            apiEndpoint = `http://${hostname}:8082${endpoint}`;
+        }
+        
+        console.log('API Call:', apiEndpoint);
+        console.log('Request options:', options);
+        
+        try {
+            const response = await fetch(apiEndpoint, options);
+            console.log('Response status:', response.status);
+            console.log('Response headers:', response.headers);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log('Response data:', data);
+            return data;
+        } catch (error) {
+            console.error('API call failed:', error);
+            throw error;
+        }
+    }
+}
+
+// Initialize the chatbot when DOM is ready (single instance)
+document.addEventListener('DOMContentLoaded', () => {
+    window.nova = new NovaChatbot();
+});
+
+// Periodic health check
+setInterval(async () => {
+    try {
+        // Use same endpoint logic as apiCall
+        let healthEndpoint;
+        if (window.location.hostname === '0.0.0.0' || window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') {
+            healthEndpoint = 'http://127.0.0.1:8082/api/health';
+        } else {
+            healthEndpoint = `http://${window.location.hostname}:8082/api/health`;
+        }
+        
+        const response = await fetch(healthEndpoint);
+        const data = await response.json();
+        
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        
+        if (data.status === 'healthy') {
+            statusText.textContent = 'Connected';
+            statusIndicator.className = 'w-3 h-3 bg-green-400 rounded-full';
+        } else {
+            statusText.textContent = 'Issues detected';
+            statusIndicator.className = 'w-3 h-3 bg-yellow-400 rounded-full';
+        }
+        
+    } catch (error) {
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        statusText.textContent = 'Disconnected';
+        statusIndicator.className = 'w-3 h-3 bg-red-400 rounded-full';
+    }
+}, 30000); // Check every 30 seconds
